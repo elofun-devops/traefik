@@ -29,10 +29,16 @@ which in turn will create the resulting routers, services, handlers, etc.
           - ""
         resources:
           - services
-          - endpoints
           - secrets
         verbs:
           - get
+          - list
+          - watch
+      - apiGroups:
+          - discovery.k8s.io
+        resources:
+          - endpointslices
+        verbs:
           - list
           - watch
       - apiGroups:
@@ -124,9 +130,9 @@ which in turn will create the resulting routers, services, handlers, etc.
           serviceAccountName: traefik-ingress-controller
           containers:
             - name: traefik
-              image: traefik:v3.0
+              image: traefik:v3.1
               args:
-                - --entrypoints.web.address=:80
+                - --entryPoints.web.address=:80
                 - --providers.kubernetesingress
               ports:
                 - name: web
@@ -287,6 +293,16 @@ which in turn will create the resulting routers, services, handlers, etc.
     traefik.ingress.kubernetes.io/service.nativelb: "true"
     ```
 
+??? info "`traefik.ingress.kubernetes.io/service.nodeportlb`"
+
+    Controls, when creating the load-balancer, whether the LB's children are directly the nodes internal IPs using the nodePort when the service type is NodePort.
+    It allows services to be reachable when Traefik runs externally from the Kubernetes cluster but within the same network of the nodes.
+    By default, NodePortLB is false.
+
+    ```yaml
+    traefik.ingress.kubernetes.io/service.nodeportlb: "true"
+    ```
+
 ??? info "`traefik.ingress.kubernetes.io/service.serversscheme`"
 
     Overrides the default scheme.
@@ -351,6 +367,14 @@ which in turn will create the resulting routers, services, handlers, etc.
     traefik.ingress.kubernetes.io/service.sticky.cookie.httponly: "true"
     ```
 
+??? info "`traefik.ingress.kubernetes.io/service.sticky.cookie.maxage`"
+
+    See [sticky sessions](../services/index.md#sticky-sessions) for more information.
+
+    ```yaml
+    traefik.ingress.kubernetes.io/service.sticky.cookie.maxage: 42
+    ```
+
 ## Path Types on Kubernetes 1.18+
 
 If the Kubernetes cluster version is 1.18+,
@@ -373,8 +397,8 @@ TLS can be enabled through the [HTTP options](../entrypoints.md#tls) of an Entry
 
 ```bash tab="CLI"
 # Static configuration
---entrypoints.websecure.address=:443
---entrypoints.websecure.http.tls
+--entryPoints.websecure.address=:443
+--entryPoints.websecure.http.tls
 ```
 
 ```yaml tab="File (YAML)"
@@ -409,8 +433,15 @@ This way, any Ingress attached to this Entrypoint will have TLS termination by d
           - ""
         resources:
           - services
-          - endpoints
           - secrets
+        verbs:
+          - get
+          - list
+          - watch
+      - apiGroups:
+          - discovery.k8s.io
+        resources:
+          - endpointslices
         verbs:
           - get
           - list
@@ -504,10 +535,10 @@ This way, any Ingress attached to this Entrypoint will have TLS termination by d
           serviceAccountName: traefik-ingress-controller
           containers:
             - name: traefik
-              image: traefik:v3.0
+              image: traefik:v3.1
               args:
-                - --entrypoints.websecure.address=:443
-                - --entrypoints.websecure.http.tls
+                - --entryPoints.websecure.address=:443
+                - --entryPoints.websecure.http.tls
                 - --providers.kubernetesingress
               ports:
                 - name: websecure
@@ -594,8 +625,15 @@ For more options, please refer to the available [annotations](#on-ingress).
           - ""
         resources:
           - services
-          - endpoints
           - secrets
+        verbs:
+          - get
+          - list
+          - watch
+      - apiGroups:
+          - discovery.k8s.io
+        resources:
+          - endpointslices
         verbs:
           - get
           - list
@@ -690,9 +728,9 @@ For more options, please refer to the available [annotations](#on-ingress).
           serviceAccountName: traefik-ingress-controller
           containers:
             - name: traefik
-              image: traefik:v3.0
+              image: traefik:v3.1
               args:
-                - --entrypoints.websecure.address=:443
+                - --entryPoints.websecure.address=:443
                 - --providers.kubernetesingress
               ports:
                 - name: websecure
@@ -814,7 +852,7 @@ TLS certificates can be managed in Secrets objects.
     whether the LB's children are directly the pods IPs or if the only child is the Kubernetes Service clusterIP.
 
     One alternative is to use an `ExternalName` service to forward requests to the Kubernetes service through DNS.
-    To do so, one must [allow external name services](https://doc.traefik.io/traefik/providers/kubernetes-ingress/#allowexternalnameservices "Link to docs about allowing external name services").
+    To do so, one must [allow external name services](../providers/kubernetes-ingress/#allowexternalnameservices "Link to docs about allowing external name services").
 
 Traefik automatically requests endpoint information based on the service provided in the ingress spec.
 Although Traefik will connect directly to the endpoints (pods),
@@ -864,4 +902,4 @@ This will allow users to create a "default router" that will match all unmatched
 
     To do this, use the `traefik.ingress.kubernetes.io/router.priority` annotation (as seen in [Annotations on Ingress](#on-ingress)) on your ingresses accordingly.
 
-{!traefik-api-management-kubernetes.md!}
+{!traefik-for-business-applications.md!}

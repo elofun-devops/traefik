@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/traefik/traefik/v3/pkg/provider/kubernetes/k8s"
 	"github.com/traefik/traefik/v3/pkg/safe"
 	"github.com/traefik/traefik/v3/pkg/tls"
+	"github.com/traefik/traefik/v3/pkg/types"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -39,17 +41,18 @@ const (
 
 // Provider holds configurations of the provider.
 type Provider struct {
-	Endpoint                  string           `description:"Kubernetes server endpoint (required for external cluster client)." json:"endpoint,omitempty" toml:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	Token                     string           `description:"Kubernetes bearer token (not needed for in-cluster client)." json:"token,omitempty" toml:"token,omitempty" yaml:"token,omitempty" loggable:"false"`
-	CertAuthFilePath          string           `description:"Kubernetes certificate authority file path (not needed for in-cluster client)." json:"certAuthFilePath,omitempty" toml:"certAuthFilePath,omitempty" yaml:"certAuthFilePath,omitempty"`
-	Namespaces                []string         `description:"Kubernetes namespaces." json:"namespaces,omitempty" toml:"namespaces,omitempty" yaml:"namespaces,omitempty" export:"true"`
-	LabelSelector             string           `description:"Kubernetes Ingress label selector to use." json:"labelSelector,omitempty" toml:"labelSelector,omitempty" yaml:"labelSelector,omitempty" export:"true"`
-	IngressClass              string           `description:"Value of kubernetes.io/ingress.class annotation or IngressClass name to watch for." json:"ingressClass,omitempty" toml:"ingressClass,omitempty" yaml:"ingressClass,omitempty" export:"true"`
-	IngressEndpoint           *EndpointIngress `description:"Kubernetes Ingress Endpoint." json:"ingressEndpoint,omitempty" toml:"ingressEndpoint,omitempty" yaml:"ingressEndpoint,omitempty" export:"true"`
-	ThrottleDuration          ptypes.Duration  `description:"Ingress refresh throttle duration" json:"throttleDuration,omitempty" toml:"throttleDuration,omitempty" yaml:"throttleDuration,omitempty" export:"true"`
-	AllowEmptyServices        bool             `description:"Allow creation of services without endpoints." json:"allowEmptyServices,omitempty" toml:"allowEmptyServices,omitempty" yaml:"allowEmptyServices,omitempty" export:"true"`
-	AllowExternalNameServices bool             `description:"Allow ExternalName services." json:"allowExternalNameServices,omitempty" toml:"allowExternalNameServices,omitempty" yaml:"allowExternalNameServices,omitempty" export:"true"`
-	DisableIngressClassLookup bool             `description:"Disables the lookup of IngressClasses." json:"disableIngressClassLookup,omitempty" toml:"disableIngressClassLookup,omitempty" yaml:"disableIngressClassLookup,omitempty" export:"true"`
+	Endpoint                  string              `description:"Kubernetes server endpoint (required for external cluster client)." json:"endpoint,omitempty" toml:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Token                     types.FileOrContent `description:"Kubernetes bearer token (not needed for in-cluster client). It accepts either a token value or a file path to the token." json:"token,omitempty" toml:"token,omitempty" yaml:"token,omitempty" loggable:"false"`
+	CertAuthFilePath          string              `description:"Kubernetes certificate authority file path (not needed for in-cluster client)." json:"certAuthFilePath,omitempty" toml:"certAuthFilePath,omitempty" yaml:"certAuthFilePath,omitempty"`
+	Namespaces                []string            `description:"Kubernetes namespaces." json:"namespaces,omitempty" toml:"namespaces,omitempty" yaml:"namespaces,omitempty" export:"true"`
+	LabelSelector             string              `description:"Kubernetes Ingress label selector to use." json:"labelSelector,omitempty" toml:"labelSelector,omitempty" yaml:"labelSelector,omitempty" export:"true"`
+	IngressClass              string              `description:"Value of kubernetes.io/ingress.class annotation or IngressClass name to watch for." json:"ingressClass,omitempty" toml:"ingressClass,omitempty" yaml:"ingressClass,omitempty" export:"true"`
+	IngressEndpoint           *EndpointIngress    `description:"Kubernetes Ingress Endpoint." json:"ingressEndpoint,omitempty" toml:"ingressEndpoint,omitempty" yaml:"ingressEndpoint,omitempty" export:"true"`
+	ThrottleDuration          ptypes.Duration     `description:"Ingress refresh throttle duration" json:"throttleDuration,omitempty" toml:"throttleDuration,omitempty" yaml:"throttleDuration,omitempty" export:"true"`
+	AllowEmptyServices        bool                `description:"Allow creation of services without endpoints." json:"allowEmptyServices,omitempty" toml:"allowEmptyServices,omitempty" yaml:"allowEmptyServices,omitempty" export:"true"`
+	AllowExternalNameServices bool                `description:"Allow ExternalName services." json:"allowExternalNameServices,omitempty" toml:"allowExternalNameServices,omitempty" yaml:"allowExternalNameServices,omitempty" export:"true"`
+	DisableIngressClassLookup bool                `description:"Disables the lookup of IngressClasses." json:"disableIngressClassLookup,omitempty" toml:"disableIngressClassLookup,omitempty" yaml:"disableIngressClassLookup,omitempty" export:"true"`
+	NativeLBByDefault         bool                `description:"Defines whether to use Native Kubernetes load-balancing mode by default." json:"nativeLBByDefault,omitempty" toml:"nativeLBByDefault,omitempty" yaml:"nativeLBByDefault,omitempty" export:"true"`
 
 	lastConfiguration safe.Safe
 
@@ -65,7 +68,7 @@ func (p *Provider) applyRouterTransform(ctx context.Context, rt *dynamic.Router,
 		return
 	}
 
-	err := p.routerTransform.Apply(ctx, rt, ingress.Annotations)
+	err := p.routerTransform.Apply(ctx, rt, ingress)
 	if err != nil {
 		log.Ctx(ctx).Error().Err(err).Msg("Apply router transform")
 	}
@@ -103,7 +106,7 @@ func (p *Provider) newK8sClient(ctx context.Context) (*clientWrapper, error) {
 		cl, err = newExternalClusterClientFromFile(os.Getenv("KUBECONFIG"))
 	default:
 		logger.Info().Msgf("Creating cluster-external Provider client%s", withEndpoint)
-		cl, err = newExternalClusterClient(p.Endpoint, p.Token, p.CertAuthFilePath)
+		cl, err = newExternalClusterClient(p.Endpoint, p.CertAuthFilePath, p.Token)
 	}
 
 	if err != nil {
@@ -132,7 +135,7 @@ func (p *Provider) Provide(configurationChan chan<- dynamic.Message, pool *safe.
 	}
 
 	if p.AllowExternalNameServices {
-		logger.Warn().Msg("ExternalName service loading is enabled, please ensure that this is expected (see AllowExternalNameServices option)")
+		logger.Info().Msg("ExternalName service loading is enabled, please ensure that this is expected (see AllowExternalNameServices option)")
 	}
 
 	pool.GoCtx(func(ctxPool context.Context) {
@@ -232,7 +235,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 	certConfigs := make(map[string]*tls.CertAndStores)
 	for _, ingress := range ingresses {
 		logger := log.Ctx(ctx).With().Str("ingress", ingress.Name).Str("namespace", ingress.Namespace).Logger()
-		ctx = logger.WithContext(ctx)
+		ctxIngress := logger.WithContext(ctx)
 
 		if !p.shouldProcessIngress(ingress, ingressClasses) {
 			continue
@@ -244,7 +247,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 			continue
 		}
 
-		err = getCertificates(ctx, ingress, client, certConfigs)
+		err = getCertificates(ctxIngress, ingress, client, certConfigs)
 		if err != nil {
 			logger.Error().Err(err).Msg("Error configuring TLS")
 		}
@@ -274,9 +277,10 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 			}
 
 			rt := &dynamic.Router{
-				Rule:     "PathPrefix(`/`)",
-				Priority: math.MinInt32,
-				Service:  "default-backend",
+				Rule:       "PathPrefix(`/`)",
+				RuleSyntax: "v3",
+				Priority:   math.MinInt32,
+				Service:    "default-backend",
 			}
 
 			if rtConfig != nil && rtConfig.Router != nil {
@@ -285,7 +289,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 				rt.TLS = rtConfig.Router.TLS
 			}
 
-			p.applyRouterTransform(ctx, rt, ingress)
+			p.applyRouterTransform(ctxIngress, rt, ingress)
 
 			conf.HTTP.Routers["default-router"] = rt
 			conf.HTTP.Services["default-backend"] = service
@@ -324,7 +328,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 				portString := pa.Backend.Service.Port.Name
 
 				if len(pa.Backend.Service.Port.Name) == 0 {
-					portString = fmt.Sprint(pa.Backend.Service.Port.Number)
+					portString = strconv.Itoa(int(pa.Backend.Service.Port.Number))
 				}
 
 				serviceName := provider.Normalize(ingress.Namespace + "-" + pa.Backend.Service.Name + "-" + portString)
@@ -332,7 +336,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 
 				rt := loadRouter(rule, pa, rtConfig, serviceName)
 
-				p.applyRouterTransform(ctx, rt, ingress)
+				p.applyRouterTransform(ctxIngress, rt, ingress)
 
 				routerKey := strings.TrimPrefix(provider.Normalize(ingress.Namespace+"-"+ingress.Name+"-"+rule.Host+pa.Path), "-")
 
@@ -417,13 +421,9 @@ func (p *Provider) updateIngressStatus(ing *netv1.Ingress, k8sClient Client) err
 func (p *Provider) shouldProcessIngress(ingress *netv1.Ingress, ingressClasses []*netv1.IngressClass) bool {
 	// configuration through the new kubernetes ingressClass
 	if ingress.Spec.IngressClassName != nil {
-		for _, ic := range ingressClasses {
-			if *ingress.Spec.IngressClassName == ic.ObjectMeta.Name {
-				return true
-			}
-		}
-
-		return false
+		return slices.ContainsFunc(ingressClasses, func(ic *netv1.IngressClass) bool {
+			return *ingress.Spec.IngressClassName == ic.ObjectMeta.Name
+		})
 	}
 
 	return p.IngressClass == ingress.Annotations[annotationKubernetesIngressClass] ||
@@ -463,8 +463,8 @@ func getCertificates(ctx context.Context, ingress *netv1.Ingress, k8sClient Clie
 
 			tlsConfigs[configKey] = &tls.CertAndStores{
 				Certificate: tls.Certificate{
-					CertFile: tls.FileOrContent(cert),
-					KeyFile:  tls.FileOrContent(key),
+					CertFile: types.FileOrContent(cert),
+					KeyFile:  types.FileOrContent(key),
 				},
 			}
 		}
@@ -573,6 +573,8 @@ func (p *Provider) loadService(client Client, namespace string, backend netv1.In
 		return nil, err
 	}
 
+	nativeLB := p.NativeLBByDefault
+
 	if svcConfig != nil && svcConfig.Service != nil {
 		svc.LoadBalancer.Sticky = svcConfig.Service.Sticky
 
@@ -584,17 +586,41 @@ func (p *Provider) loadService(client Client, namespace string, backend netv1.In
 			svc.LoadBalancer.ServersTransport = svcConfig.Service.ServersTransport
 		}
 
-		if svcConfig.Service.NativeLB {
-			address, err := getNativeServiceAddress(*service, portSpec)
-			if err != nil {
-				return nil, fmt.Errorf("getting native Kubernetes Service address: %w", err)
+		if svcConfig.Service.NativeLB != nil {
+			nativeLB = *svcConfig.Service.NativeLB
+		}
+
+		if svcConfig.Service.NodePortLB && service.Spec.Type == corev1.ServiceTypeNodePort {
+			nodes, nodesExists, nodesErr := client.GetNodes()
+			if nodesErr != nil {
+				return nil, nodesErr
+			}
+
+			if !nodesExists || len(nodes) == 0 {
+				return nil, fmt.Errorf("nodes not found in namespace %s", namespace)
 			}
 
 			protocol := getProtocol(portSpec, portSpec.Name, svcConfig)
 
-			svc.LoadBalancer.Servers = []dynamic.Server{
-				{URL: fmt.Sprintf("%s://%s", protocol, address)},
+			var servers []dynamic.Server
+
+			for _, node := range nodes {
+				for _, addr := range node.Status.Addresses {
+					if addr.Type == corev1.NodeInternalIP {
+						hostPort := net.JoinHostPort(addr.Address, strconv.Itoa(int(portSpec.NodePort)))
+
+						servers = append(servers, dynamic.Server{
+							URL: fmt.Sprintf("%s://%s", protocol, hostPort),
+						})
+					}
+				}
 			}
+
+			if len(servers) == 0 {
+				return nil, fmt.Errorf("no servers were generated for service %s in namespace", backend.Service.Name)
+			}
+
+			svc.LoadBalancer.Servers = servers
 
 			return svc, nil
 		}
@@ -611,36 +637,55 @@ func (p *Provider) loadService(client Client, namespace string, backend netv1.In
 		return svc, nil
 	}
 
-	endpoints, endpointsExists, endpointsErr := client.GetEndpoints(namespace, backend.Service.Name)
-	if endpointsErr != nil {
-		return nil, endpointsErr
+	if nativeLB {
+		address, err := getNativeServiceAddress(*service, portSpec)
+		if err != nil {
+			return nil, fmt.Errorf("getting native Kubernetes Service address: %w", err)
+		}
+
+		protocol := getProtocol(portSpec, portSpec.Name, svcConfig)
+		svc.LoadBalancer.Servers = []dynamic.Server{
+			{URL: fmt.Sprintf("%s://%s", protocol, address)},
+		}
+
+		return svc, nil
 	}
 
-	if !endpointsExists {
-		return nil, errors.New("endpoints not found")
+	endpointSlices, err := client.GetEndpointSlicesForService(namespace, backend.Service.Name)
+	if err != nil {
+		return nil, fmt.Errorf("getting endpointslices: %w", err)
 	}
 
-	for _, subset := range endpoints.Subsets {
+	addresses := map[string]struct{}{}
+	for _, endpointSlice := range endpointSlices {
 		var port int32
-		for _, p := range subset.Ports {
-			if portName == p.Name {
-				port = p.Port
+		for _, p := range endpointSlice.Ports {
+			if portName == *p.Name {
+				port = *p.Port
 				break
 			}
 		}
-
 		if port == 0 {
 			continue
 		}
 
 		protocol := getProtocol(portSpec, portName, svcConfig)
 
-		for _, addr := range subset.Addresses {
-			hostPort := net.JoinHostPort(addr.IP, strconv.Itoa(int(port)))
+		for _, endpoint := range endpointSlice.Endpoints {
+			if endpoint.Conditions.Ready == nil || !*endpoint.Conditions.Ready {
+				continue
+			}
 
-			svc.LoadBalancer.Servers = append(svc.LoadBalancer.Servers, dynamic.Server{
-				URL: fmt.Sprintf("%s://%s", protocol, hostPort),
-			})
+			for _, address := range endpoint.Addresses {
+				if _, ok := addresses[address]; ok {
+					continue
+				}
+
+				addresses[address] = struct{}{}
+				svc.LoadBalancer.Servers = append(svc.LoadBalancer.Servers, dynamic.Server{
+					URL: fmt.Sprintf("%s://%s", protocol, net.JoinHostPort(address, strconv.Itoa(int(port)))),
+				})
+			}
 		}
 	}
 

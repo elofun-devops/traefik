@@ -227,11 +227,84 @@ If both TCP and UDP are wanted for the same port, two entryPoints definitions ar
     ```
 
     ```bash tab="CLI"
-    --entrypoints.specificIPv4.address=192.168.2.7:8888
-    --entrypoints.specificIPv6.address=[2001:db8::1]:8888
+    --entryPoints.specificIPv4.address=192.168.2.7:8888
+    --entryPoints.specificIPv6.address=[2001:db8::1]:8888
     ```
 
     Full details for how to specify `address` can be found in [net.Listen](https://golang.org/pkg/net/#Listen) (and [net.Dial](https://golang.org/pkg/net/#Dial)) of the doc for go.
+
+### ReusePort
+
+_Optional, Default=false_
+
+The `ReusePort` option enables EntryPoints from the same or different processes
+listening on the same TCP/UDP port by utilizing the `SO_REUSEPORT` socket option.
+It also allows the kernel to act like a load balancer to distribute incoming
+connections between entry points.
+
+For example, you can use it with the [transport.lifeCycle](#lifecycle) to do
+canary deployments against Traefik itself. Like upgrading Traefik version or
+reloading the static configuration without any service downtime.
+
+!!! warning "Supported platforms"
+
+    The `ReusePort` option currently works only on Linux, FreeBSD, OpenBSD and Darwin.
+    It will be ignored on other platforms.
+
+    There is a known bug in the Linux kernel that may cause unintended TCP connection failures when using the `ReusePort` option.
+    For more details, see https://lwn.net/Articles/853637/.
+
+??? example "Listen on the same port"
+
+    ```yaml tab="File (yaml)"
+    entryPoints:
+      web:
+        address: ":80"
+        reusePort: true
+    ```
+
+    ```toml tab="File (TOML)"
+    [entryPoints.web]
+      address = ":80"
+      reusePort = true
+    ```
+
+    ```bash tab="CLI"
+    --entryPoints.web.address=:80
+    --entryPoints.web.reusePort=true
+    ```
+
+    Now it is possible to run multiple Traefik processes with the same EntryPoint configuration.
+
+??? example "Listen on the same port but bind to a different host"
+
+    ```yaml tab="File (yaml)"
+    entryPoints:
+      web:
+        address: ":80"
+        reusePort: true
+      privateWeb:
+        address: "192.168.1.2:80"
+        reusePort: true
+    ```
+
+    ```toml tab="File (TOML)"
+    [entryPoints.web]
+      address = ":80"
+      reusePort = true
+    [entryPoints.privateWeb]
+      address = "192.168.1.2:80"
+      reusePort = true
+    ```
+
+    ```bash tab="CLI"
+    --entryPoints.web.address=:80
+    --entryPoints.web.reusePort=true
+    --entryPoints.privateWeb.address=192.168.1.2:80
+    --entryPoints.privateWeb.reusePort=true
+    ```
+
+    Requests to `192.168.1.2:80` will only be handled by routers that have `privateWeb` as the entry point.
 
 ### AsDefault
 
@@ -248,7 +321,7 @@ EntryPoints in this list are used (by default) on HTTP and TCP routers that do n
     If at least one EntryPoint has the `AsDefault` option set to `true`,
     then the list of default EntryPoints includes only EntryPoints that have the `AsDefault` option set to `true`.
 
-    Some built-in EntryPoints are always excluded from the list, namely: `traefik`, `traefikhub-api`, and `traefikhub-tunl`.
+    Some built-in EntryPoints are always excluded from the list, namely: `traefik`.
 
 !!! warning "Only TCP and HTTP"
 
@@ -276,9 +349,9 @@ EntryPoints in this list are used (by default) on HTTP and TCP routers that do n
     ```
 
     ```bash tab="CLI"
-    --entrypoints.web.address=:80
-    --entrypoints.websecure.address=:443
-    --entrypoints.websecure.asDefault=true
+    --entryPoints.web.address=:80
+    --entryPoints.websecure.address=:443
+    --entryPoints.websecure.asDefault=true
     ```
 
 ### HTTP/2
@@ -328,7 +401,7 @@ entryPoints:
 ```
 
 ```bash tab="CLI"
---entrypoints.name.http3
+--entryPoints.name.http3
 ```
 
 ??? info "HTTP/3 uses UDP+TLS"
@@ -360,7 +433,7 @@ It can be used to override the authority in the `alt-svc` header, for example if
     ```
     
     ```bash tab="CLI"
-    --entrypoints.name.http3.advertisedport=443
+    --entryPoints.name.http3.advertisedport=443
     ```
 
 ### Forwarded Headers
@@ -436,13 +509,14 @@ Setting them has no effect for UDP entryPoints.
 
 ??? info "`transport.respondingTimeouts.readTimeout`"
 
-    _Optional, Default=0s_
+    _Optional, Default=60s_
 
     `readTimeout` is the maximum duration for reading the entire request, including the body.
 
     If zero, no timeout exists.  
     Can be provided in a format supported by [time.ParseDuration](https://golang.org/pkg/time/#ParseDuration) or as raw values (digits).
     If no units are provided, the value is parsed assuming seconds.
+    We strongly suggest to adapt this value accordingly to the your needs.
 
     ```yaml tab="File (YAML)"
     ## Static configuration
@@ -623,17 +697,77 @@ Controls the behavior of Traefik during the shutdown phase.
     --entryPoints.name.transport.lifeCycle.graceTimeOut=42
     ```
 
+#### `keepAliveMaxRequests`
+
+_Optional, Default=0_
+
+The maximum number of requests Traefik can handle before sending a `Connection: Close` header to the client (for HTTP2, Traefik sends a GOAWAY). Zero means no limit.
+
+```yaml tab="File (YAML)"
+## Static configuration
+entryPoints:
+  name:
+    address: ":8888"
+    transport:
+      keepAliveMaxRequests: 42
+```
+
+```toml tab="File (TOML)"
+## Static configuration
+[entryPoints]
+  [entryPoints.name]
+    address = ":8888"
+    [entryPoints.name.transport]
+      keepAliveMaxRequests = 42
+```
+
+```bash tab="CLI"
+## Static configuration
+--entryPoints.name.address=:8888
+--entryPoints.name.transport.keepAliveMaxRequests=42
+```
+
+#### `keepAliveMaxTime`
+
+_Optional, Default=0s_
+
+The maximum duration Traefik can handle requests before sending a `Connection: Close` header to the client (for HTTP2, Traefik sends a GOAWAY). Zero means no limit.
+
+```yaml tab="File (YAML)"
+## Static configuration
+entryPoints:
+  name:
+    address: ":8888"
+    transport:
+      keepAliveMaxTime: 42s
+```
+
+```toml tab="File (TOML)"
+## Static configuration
+[entryPoints]
+  [entryPoints.name]
+    address = ":8888"
+    [entryPoints.name.transport]
+      keepAliveMaxTime = "42s"
+```
+
+```bash tab="CLI"
+## Static configuration
+--entryPoints.name.address=:8888
+--entryPoints.name.transport.keepAliveMaxTime=42s
+```
+
 ### ProxyProtocol
 
-Traefik supports [ProxyProtocol](https://www.haproxy.org/download/2.0/doc/proxy-protocol.txt) version 1 and 2.
+Traefik supports [PROXY protocol](https://www.haproxy.org/download/2.0/doc/proxy-protocol.txt) version 1 and 2.
 
-If Proxy Protocol header parsing is enabled for the entry point, this entry point can accept connections with or without Proxy Protocol headers.
+If PROXY protocol header parsing is enabled for the entry point, this entry point can accept connections with or without PROXY protocol headers.
 
-If the Proxy Protocol header is passed, then the version is determined automatically.
+If the PROXY protocol header is passed, then the version is determined automatically.
 
 ??? info "`proxyProtocol.trustedIPs`"
 
-    Enabling Proxy Protocol with Trusted IPs.
+    Enabling PROXY protocol with Trusted IPs.
 
     ```yaml tab="File (YAML)"
     ## Static configuration
@@ -696,7 +830,7 @@ If the Proxy Protocol header is passed, then the version is determined automatic
 
 !!! warning "Queuing Traefik behind Another Load Balancer"
 
-    When queuing Traefik behind another load-balancer, make sure to configure Proxy Protocol on both sides.
+    When queuing Traefik behind another load-balancer, make sure to configure PROXY protocol on both sides.
     Not doing so could introduce a security risk in your system (enabling request forgery).
 
 ## HTTP Options
@@ -736,10 +870,10 @@ This whole section is dedicated to options, keyed by entry point, that will appl
     ```
 
     ```bash tab="CLI"
-    --entrypoints.web.address=:80
-    --entrypoints.web.http.redirections.entryPoint.to=websecure
-    --entrypoints.web.http.redirections.entryPoint.scheme=https
-    --entrypoints.websecure.address=:443
+    --entryPoints.web.address=:80
+    --entryPoints.web.http.redirections.entryPoint.to=websecure
+    --entryPoints.web.http.redirections.entryPoint.scheme=https
+    --entryPoints.websecure.address=:443
     ```
 
 #### `entryPoint`
@@ -774,7 +908,7 @@ This section is a convenience to enable (permanent) redirecting of all incoming 
     ```
 
     ```bash tab="CLI"
-    --entrypoints.foo.http.redirections.entryPoint.to=websecure
+    --entryPoints.foo.http.redirections.entryPoint.to=websecure
     ```
 
 ??? info "`entryPoint.scheme`"
@@ -804,7 +938,7 @@ This section is a convenience to enable (permanent) redirecting of all incoming 
     ```
 
     ```bash tab="CLI"
-    --entrypoints.foo.http.redirections.entryPoint.scheme=https
+    --entryPoints.foo.http.redirections.entryPoint.scheme=https
     ```
 
 ??? info "`entryPoint.permanent`"
@@ -834,12 +968,12 @@ This section is a convenience to enable (permanent) redirecting of all incoming 
     ```
 
     ```bash tab="CLI"
-    --entrypoints.foo.http.redirections.entrypoint.permanent=true
+    --entryPoints.foo.http.redirections.entrypoint.permanent=true
     ```
 
 ??? info "`entryPoint.priority`"
 
-    _Optional, Default=MaxInt32-1 (2147483646)_
+    _Optional, Default=MaxInt-1_
 
     Priority of the generated router.
 
@@ -864,7 +998,7 @@ This section is a convenience to enable (permanent) redirecting of all incoming 
     ```
 
     ```bash tab="CLI"
-    --entrypoints.foo.http.redirections.entrypoint.priority=10
+    --entryPoints.foo.http.redirections.entrypoint.priority=10
     ```
 
 ### EncodeQuerySemicolons
@@ -892,8 +1026,8 @@ entryPoints:
 ```
 
 ```bash tab="CLI"
---entrypoints.websecure.address=:443
---entrypoints.websecure.http.encodequerysemicolons=true
+--entryPoints.websecure.address=:443
+--entryPoints.websecure.http.encodequerysemicolons=true
 ```
 
 #### Examples
@@ -928,8 +1062,8 @@ entryPoints:
 ```
 
 ```bash tab="CLI"
---entrypoints.websecure.address=:443
---entrypoints.websecure.http.middlewares=auth@file,strip@file
+--entryPoints.websecure.address=:443
+--entryPoints.websecure.http.middlewares=auth@file,strip@file
 ```
 
 ### TLS
@@ -975,13 +1109,13 @@ entryPoints:
 ```
 
 ```bash tab="CLI"
---entrypoints.websecure.address=:443
---entrypoints.websecure.http.tls.options=foobar
---entrypoints.websecure.http.tls.certResolver=leresolver
---entrypoints.websecure.http.tls.domains[0].main=example.com
---entrypoints.websecure.http.tls.domains[0].sans=foo.example.com,bar.example.com
---entrypoints.websecure.http.tls.domains[1].main=test.com
---entrypoints.websecure.http.tls.domains[1].sans=foo.test.com,bar.test.com
+--entryPoints.websecure.address=:443
+--entryPoints.websecure.http.tls.options=foobar
+--entryPoints.websecure.http.tls.certResolver=leresolver
+--entryPoints.websecure.http.tls.domains[0].main=example.com
+--entryPoints.websecure.http.tls.domains[0].sans=foo.example.com,bar.example.com
+--entryPoints.websecure.http.tls.domains[1].main=test.com
+--entryPoints.websecure.http.tls.domains[1].sans=foo.test.com,bar.test.com
 ```
 
 ??? example "Let's Encrypt"
@@ -1004,8 +1138,8 @@ entryPoints:
     ```
 
     ```bash tab="CLI"
-    --entrypoints.websecure.address=:443
-    --entrypoints.websecure.http.tls.certResolver=leresolver
+    --entryPoints.websecure.address=:443
+    --entryPoints.websecure.http.tls.certResolver=leresolver
     ```
 
 ## UDP Options
@@ -1036,8 +1170,30 @@ entryPoints:
 ```
 
 ```bash tab="CLI"
-entrypoints.foo.address=:8000/udp
-entrypoints.foo.udp.timeout=10s
+--entryPoints.foo.address=:8000/udp
+--entryPoints.foo.udp.timeout=10s
 ```
 
 {!traefik-for-business-applications.md!}
+
+## Systemd Socket Activation
+
+Traefik supports [systemd socket activation](https://www.freedesktop.org/software/systemd/man/latest/systemd-socket-activate.html).
+
+When a socket activation file descriptor name matches an EntryPoint name, the corresponding file descriptor will be used as the TCP listener for the matching EntryPoint.
+
+```bash
+systemd-socket-activate -l 80 -l 443 --fdname web:websecure  ./traefik --entrypoints.web --entrypoints.websecure
+```
+
+!!! warning "EntryPoint Address"
+
+    When a socket activation file descriptor name matches an EntryPoint name its address configuration is ignored.     
+
+!!! warning "TCP Only"
+
+    Socket activation is not yet supported with UDP entryPoints.
+
+!!! warning "Docker Support"
+
+    Socket activation is not supported by Docker but works with Podman containers.

@@ -12,6 +12,14 @@ A story of Tags, Services & Nomads
 
 Attach tags to your Nomad services and let Traefik do the rest!
 
+One of the best feature of Traefik is to delegate the routing configuration to the application level.
+With Nomad, Traefik can leverage tags attached to a service to generate routing rules.
+
+!!! warning "Tags & sensitive data"
+
+    We recommend to *not* use tags to store sensitive data (certificates, credentials, etc).
+    Instead, we recommend to store sensitive data in a safer storage (secrets, file, etc).
+
 ## Routing Configuration
 
 !!! info "tags"
@@ -263,6 +271,14 @@ you'd add the tag `traefik.http.services.{name-of-your-choice}.loadbalancer.pass
 
     ```yaml
     traefik.http.services.myservice.loadbalancer.sticky.cookie.samesite=none
+    ```
+
+??? info "`traefik.http.services.<service_name>.loadbalancer.sticky.cookie.maxage`"
+
+    See [sticky sessions](../services/index.md#sticky-sessions) for more information.
+
+    ```yaml
+    traefik.http.services.myservice.loadbalancer.sticky.cookie.maxage=42
     ```
 
 ??? info "`traefik.http.services.<service_name>.loadbalancer.responseforwarding.flushinterval`"
